@@ -1,4 +1,5 @@
 import eventlet
+
 eventlet.monkey_patch()
 
 
@@ -19,141 +20,134 @@ from werkzeug.utils import secure_filename
 import os
 
 
-
 app = Flask(__name__)
 cors = CORS(app)
 server_assistent.init_db()
 
 
-
-
-
-
-
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 
 # ... Other imports ...
 
-@app.route('/invite_user', methods=['POST'])
+
+@app.route("/invite_user", methods=["POST"])
 def invite_user():
     data = request.json
-    email = data['email']
-    group_id = data['group_id']
+    email = data["email"]
+    group_id = data["group_id"]
     result = server_assistent.invite_user_to_group(email, group_id)
     if result:
-        return jsonify({"status": "success", "message": "User invited successfully."}), 200
+        return (
+            jsonify({"status": "success", "message": "User invited successfully."}),
+            200,
+        )
     else:
         return jsonify({"status": "error", "message": "Failed to invite user."}), 400
 
-@app.route('/check_invitations/<email>', methods=['GET'])
+
+@app.route("/check_invitations/<email>", methods=["GET"])
 def check_invitations(email):
     group_ids = server_assistent.check_user_invitation(email)
     return jsonify(group_ids)
 
+
 # ... Rest of app.py ...
 
 
-
-
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-           
-           
-@app.route('/uploads/<filename>', methods=['GET'])
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route("/uploads/<filename>", methods=["GET"])
 def uploaded_file(filename):
-    return send_from_directory('uploads', filename)
+    return send_from_directory("uploads", filename)
 
 
-
-@app.route('/upload_photo', methods=['POST'])
+@app.route("/upload_photo", methods=["POST"])
 def upload_photo():
     print("Inside upload_photo function.")
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
     if file and allowed_file(file.filename):
-        groupID = request.form.get('groupID')
-        userID = request.form.get('userID')
+        groupID = request.form.get("groupID")
+        userID = request.form.get("userID")
         # You should validate these values here (not implemented for simplicity)
 
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         file.save(filepath)
-        print ("groupID", groupID , "userID" , userID)
+        print("groupID", groupID, "userID", userID)
 
-        
         # Save file metadata to SQLite database
         server_assistent.save_file_metadata(filename, filepath, groupID, userID)
-        
-        return jsonify({'success': True, 'filepath': filepath}), 201
-    return jsonify({'error': 'Invalid file type'}), 400
 
-@app.route('/get_photos/<group_id>', methods=['GET'])
+        return jsonify({"success": True, "filepath": filepath}), 201
+    return jsonify({"error": "Invalid file type"}), 400
+
+
+@app.route("/get_photos/<group_id>", methods=["GET"])
 def get_photos(group_id):
     photos = server_assistent.fetch_photos_by_group(group_id)
     if not photos:
-        return jsonify({'error': 'No photos found for this group'}), 404
-    
-    return jsonify({'photos': photos}), 200
+        return jsonify({"error": "No photos found for this group"}), 404
 
+    return jsonify({"photos": photos}), 200
 
 
 @socketio.on("join")
 def on_join(data):
-    username = data['username']
-    room = data['room']
+    username = data["username"]
+    room = data["room"]
     join_room(room)
-    send(username + ' has entered the room.', room=room)
+    send(username + " has entered the room.", room=room)
+
 
 @socketio.on("leave")
 def on_leave(data):
-    username = data['username']
-    room = data['room']
+    username = data["username"]
+    room = data["room"]
     leave_room(room)
-    send(username + ' has left the room.', room=room)
+    send(username + " has left the room.", room=room)
+
 
 @socketio.on("message")
 def handle_message(data):
-    room = data['room']
-    user_id = data['user_id']
-    message_text = data['message']
+    room = data["room"]
+    user_id = data["user_id"]
+    message_text = data["message"]
     timestamp = datetime.datetime.now()
     # Save message to database
     server_assistent.query_db(
         "INSERT INTO chat_messages (room_id, user_id, message_text, timestamp) VALUES (?, ?, ?, ?)",
-        (room, user_id, message_text, timestamp)
+        (room, user_id, message_text, timestamp),
     )
     # Emit the message to the room
-    emit("new_message", {
-        "user_id": user_id,
-        "message": message_text,
-        "timestamp": str(timestamp)
-    }, room=room)
+    emit(
+        "new_message",
+        {"user_id": user_id, "message": message_text, "timestamp": str(timestamp)},
+        room=room,
+    )
 
 
 @socketio.on("get_chat_history")
 def handle_chat_history(data):
     try:
-        room = data['room']
+        room = data["room"]
         print("asdassssssssssssssssssssssssss")
 
         # Fetch messages for the room from the database
         messages = server_assistent.query_db(
-            "SELECT user_id, message_text FROM chat_messages WHERE room_id = ?", 
-            (room)
+            "SELECT user_id, message_text FROM chat_messages WHERE room_id = ?", (room)
         )
 
         # Check if messages were fetched
@@ -162,7 +156,9 @@ def handle_chat_history(data):
             emit("error", {"message": f"No messages found for room: {room}"}, room=room)
             return
 
-        stringified_messages = [{"username": (msg[0]), "message": (msg[1])} for msg in messages]
+        stringified_messages = [
+            {"username": (msg[0]), "message": (msg[1])} for msg in messages
+        ]
         print(f"Messages for room {room}: {stringified_messages}")
 
         # Send the messages to the requesting client
@@ -176,11 +172,8 @@ def handle_chat_history(data):
         emit("error", {"message": "Failed to fetch chat history."})
 
 
-
-
-
-
 # ... existing imports and setup ...
+
 
 @socketio.on("get_rooms")
 def handle_get_rooms():
@@ -191,42 +184,49 @@ def handle_get_rooms():
 @socketio.on("add_room")
 def handle_add_room(data):
     room_name = data["room_name"]
-    group_id = data["group_id"]   # Use .get() to ensure the code doesn't break if the field isn't provided
+    group_id = data[
+        "group_id"
+    ]  # Use .get() to ensure the code doesn't break if the field isn't provided
     user1 = data["user1"]
     user2 = data["user2"]
 
-    success = server_assistent.add_room(room_name, group_id, user1, user2)   # Assuming the function now accepts these args
+    success = server_assistent.add_room(
+        room_name, group_id, user1, user2
+    )  # Assuming the function now accepts these args
     if success:
-     emit("room_added", {"message": "Room added successfully!", "room_name": room_name})
+        emit(
+            "room_added",
+            {"message": "Room added successfully!", "room_name": room_name},
+        )
     else:
-     emit("error", {"error": "Room already exists!"})
-     
-        
+        emit("error", {"error": "Room already exists!"})
 
 
 @socketio.on("delete_room")
 def handle_delete_room(data):
     room_name = data["room_name"]
     server_assistent.delete_room(room_name)
-    emit("room_deleted", {"message": "Room deleted successfully!", "room_name": room_name})
+    emit(
+        "room_deleted",
+        {"message": "Room deleted successfully!", "room_name": room_name},
+    )
+
 
 @socketio.on("message")
 def handle_message(data):
-    room = data['room']
-    user_id = data['user_id']
-    message_text = data['message']
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    room = data["room"]
+    user_id = data["user_id"]
+    message_text = data["message"]
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     server_assistent.insert_message(room, user_id, message_text, timestamp)
-    emit("new_message", {
-        "user_id": user_id,
-        "message": message_text,
-        "timestamp": timestamp
-    }, room=room)
+    emit(
+        "new_message",
+        {"user_id": user_id, "message": message_text, "timestamp": timestamp},
+        room=room,
+    )
+
 
 # ... rest of your app.py ...
-
-
-
 
 
 @app.route("/get_group_details_by_id", methods=["POST"])
@@ -1082,7 +1082,7 @@ def remove_event():
 # if __name__ == "__main__":
 #     app.run(host="0.0.0.0", port=5000, debug=True)
 if __name__ == "__main__":
-    socketio.run(app, host="https://sharedspace-694cadbda576.herokuapp.com", port=443, debug=True)
+    # Get the port number from the environment variable or use a default value
+    port = int(os.environ.get("PORT", 5000))
 
-
-
+    socketio.run(app, host="0.0.0.0", port=port, debug=True)
